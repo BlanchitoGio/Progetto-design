@@ -338,8 +338,7 @@ def main():
     print(f"Pm: {Pm:.2f} MPa")
     print(f"Sm: {Sm:.2f} MPa")
     safety_criterium(Pm,Sm,s_max)
-    #plotting(r,T,q,s)
-
+    plotting(r,T,q,s)
 
 
 
@@ -388,7 +387,7 @@ def main():
     #Calcoulus of the thermal power flux
     Tq = Tpowerflux(r, r_Vin, T, k)
     safety_criterium(Pm,Sm,s_max)
-    #plotting (r,T,q,s)
+    plotting (r,T,q,s)
     #Plots of the thermal power flux
     plt.figure(figsize=(12, 12))
     plt.plot(r, Tq, 'b-', linewidth=2, label='Volumetric heat generation')
@@ -476,16 +475,17 @@ def main():
     print(f"Pm: {Pm:.2f} MPa")
     print(f"Sm: {Sm:.2f} MPa")
     safety_criterium(Pm,Sm,s_max)
-    #plotting(r,Tt,q,st)
+    plotting(r,Tt,q,st)
     
     #--- Themperature profile in the vessel with the thermal shield ---
     r = np.linspace(r_Vin, r_Vout, nr)  # radial coordinates
     # Initial hypothesis for the T profile
     T = np.full(nr, (T_1 + T_2) / 2.0)  # we will start from this and make it converge.
     # reducted q''' profile in all the numerical nodes
-    q = qprofile(r, r_Vout, B, Phi1, E, mu)
+    q = qprofile(r, r_Vin, B, Phi1, E, mu)  
     print(f"q0: {q[0]:.2f} m")
     print(f"qn: {q[nr-1]:.2f} m")
+    
     # Convergence loop function
     for iter_count in range(MAX_ITERATIONS):
         T_old = T.copy()  # Save the previous temperature profile
@@ -523,7 +523,7 @@ def main():
     print(f"Pm: {Pm:.2f} MPa")
     print(f"Sm: {Sm:.2f} MPa")
     safety_criterium(Pm,Sm,s_max)
-    #plotting(r,T,q,s)
+    plotting(r,T,q,s)
 
 
 if __name__ == '__main__':
