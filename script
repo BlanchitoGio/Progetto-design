@@ -145,6 +145,99 @@ def Sm_calcolus(T_ave):
         print("WARNING: Sm is not present in the list")
     return Sm, Sy
 
+def Bthickness(t, T, r_Vin, r_Vout, Eyoung, NUpoisson):
+    for iter_count in range(MAX_ITERATIONS):
+        print(f"t: {t:.4f} m")
+        T_ave=np.mean(T)
+        #print(f"T avg: {T_ave:.2f} C")
+        [Sm,Sy] = Sm_calcolus(T_ave)
+        ##---Buckling evaluation---
+        #print(f"Sy: {Sy:.2f} MPa")
+        #Bucling of the vessel
+        Dt_c=math.sqrt(Eyoung*10**3/((1-NUpoisson**2)*Sy)) #Critical slenderness ratio
+        #print(f"D/t: {Dt_c:.2f}")
+        Dt = (r_Vout*2)/t
+        #print(f"D/t: {Dt:.2f}")
+        #if Dt < Dt_c:
+        #    print("Plastic collapse buckling")
+        #else: 
+        #    print("Elastic collapse buckling")
+        #Critical pressures for the buckling in a thin tubes (Rext/t>7,5)
+        pe=2*(Eyoung*10**3/(1-NUpoisson**2))/Dt**3 #Buckling elsatic collapse pressure
+        p0=2*Sy/Dt #Plastic collapse pressure
+        #print(f"pe: {pe:.2f} MPa")
+        #print(f"p0: {p0:.2f} MPa")
+        #print(f"p0/pe: {p0/pe:.2f} MPa")
+        W = 0.01 #Ovalization factor
+        Z = math.sqrt(3)*(2*Dt+1)*W/4 #Imperfection factor
+        #print(f"Z: {Z:.2f}")
+        Pu= p0/math.sqrt(1+Z**2)  #Lower bound collapse pressure
+        Pl= (p0+pe*(1+Z)-math.sqrt((p0+pe*(1+Z))**2-(4*pe*p0)))/2  #Lower bound collapse pressure
+        if p0/pe < 0.04:
+            muz= 1 #Reduction factor for the buckling pressure
+        elif p0/pe > 0.07:
+            muz= 0 #Reduction factor for the buckling pressure
+        else: 
+            muz= 0.35*math.log10(pe/p0)-0.125 #Reduction factor for the buckling pressure
+        
+        Pallow=(muz*Pu+(1-muz)*Pl)/1.5 #Allowable buckling pressure with safety factor 1.5
+        
+        
+        
+        t=t+0.001 #Increment of the thickness [m]
+        #print(f"t: {t:.4f} m")
+        r_out = r_Vin + t  #outer vessel diameter [m]
+        r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
+        Dr = (r_out - r_Vin) / (nr - 1)  # spatial step
+        #Boundary conditions for the Global Coefficient: conduction+ convection at the external wall
+        r_iout=r_out+t_ins #outer radius of the thermal insulation [m]
+        rlog=math.log(r_iout/r_out) #log-mean radius of the thermal insulator
+        R_cond=r_out*rlog/k_ins     #conduction resistance through the thermal insulator in a cilindrical shape [m^2*K/W]
+        U2=1/(R_conv+R_cond)        #Overall heat transfer coefficient from the steel outer surface to the bulk water
+
+        r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
+        # q''' profile in all the numerical nodes
+        q = qprofile(r, r_Vin, B, Phi0, E, mu)
+        # Initial hypothesis for the T profile
+        # Implicit finite-difference solver for the transient heat (Fourier) equation in cylindrical coordinates (radial, axisymmetric).
+        # Convergence loop function
+        for ITER_COUNT in range(MAX_ITERATIONS):
+            T_old = T.copy()  # Save the previous temperature profile
+
+            # --- Defining the Boundary Conditions ---
+
+            # --- A. Calcoulus od internal BC (i=0) ---
+            # Using the value of of T[1]==T_old[1] to calcoulate the new step T[0]
+            #  (T_1-T[0])*h1 = -k (T[1]-T[0])/Dr
+            T[0] = (h1 * T_1 + (k/Dr) * T_old[1]) / (h1 + k/Dr)
+
+            # --- B. Calcoulus of external BC (i=nr) ---
+            # Using the value of T[nr-2]==T_old[nr-2] to calculate the new step T[nr-1]
+            #  -k (T[nr-1]-T[nr-2])/Dr = U2 * (T[nr-1]-T_2)
+            T[nr-1] = (U2 * T_2 + (k/Dr) * T_old[nr-2]) / (U2 + k/Dr)
+
+            # --- Calcoulus of internal nodes (i=1...nr-2) ---
+            # We use the implicit euler scheme to calculate the internal nodes
+            for i in range(1, nr - 1):
+                coeff_A = (k/Dr**2) - (k / (r[i] * 2 * Dr))
+                coeff_C = (k/Dr**2) + (k / (r[i] * 2 * Dr))
+                coeff_B = (2*k / Dr**2)
+                T[i] = (coeff_A * T[i-1] + coeff_C * T_old[i+1] + q[i]) / coeff_B
+
+            # ---Convergence check ---
+            if np.allclose(T, T_old, atol=TOLERANCE):
+                #print(f"Convergence reached after {ITER_COUNT} iteractions.")
+                break
+        else:
+            # If the loop finishes without 'break'
+            print("WARNING: Maximum interactions reached -> NO COVERGENCE.")
+        if Pallow>=(pOp*10**-1):
+            print(f"The buckling safety crieterium is satisfied with thickness t={t:.4f} m, since Pallow >= pDes, the thickness is sufficient to hold the buckling pressure")
+            break
+    else:
+        print("WARNING: Maximum interactions reached for buckling-> NO COVERGENCE.")
+    return t, q, T, r, Sm , Sy
+
 def sigmatheta(nr, T, alpha, Eyoung, NUpoisson):
     #conversion
     Eyoung = Eyoung*10**(3) #conversion [GPa->MPa]
@@ -155,69 +248,73 @@ def sigmatheta(nr, T, alpha, Eyoung, NUpoisson):
     return sigma
 
 def Tthickness (t_min, r_Vin, nr, B, Phi0, E, mu):
-  for iter_count in range(max_iteration):
-    t = t_min
-    r_out = r_Vin + t  #outer vessel diameter [m]
-    r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
-    Dr = (r_out - r_Vin) / (nr - 1)  # spatial step
-    #Boundary conditions for the Global Coefficient: conduction+ convection at the external wall
-    r_iout=r_out+t_ins #outer radius of the thermal insulation [m]
-    rlog=math.log(r_iout/r_out) #log-mean radius of the thermal insulator
-    R_cond=r_out*rlog/k_ins     #conduction resistance through the thermal insulator in a cilindrical shape [m^2*K/W]
-    U2=1/(R_conv+R_cond)        #Overall heat transfer coefficient from the steel outer surface to the bulk water
+    
+    for iter_count in range(max_iteration):
+        t = t_min
+        #T_ave=np.mean(T)
+        #[Sm,Sy] = Sm_calcolus(T_ave)
+        #t_min=Bthickness(t_min, Sy, r_Vin, r_Vout, Eyoung, NUpoisson)
+        r_out = r_Vin + t  #outer vessel diameter [m]
+        r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
+        Dr = (r_out - r_Vin) / (nr - 1)  # spatial step
+        #Boundary conditions for the Global Coefficient: conduction+ convection at the external wall
+        r_iout=r_out+t_ins #outer radius of the thermal insulation [m]
+        rlog=math.log(r_iout/r_out) #log-mean radius of the thermal insulator
+        R_cond=r_out*rlog/k_ins     #conduction resistance through the thermal insulator in a cilindrical shape [m^2*K/W]
+        U2=1/(R_conv+R_cond)        #Overall heat transfer coefficient from the steel outer surface to the bulk water
 
-    r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
-    # q''' profile in all the numerical nodes
-    q = qprofile(r, r_Vin, B, Phi0, E, mu)
-    # Initial hypothesis for the T profile
-    T = np.full(nr, (T_1 + T_2) / 2.0)  # we will start from this and make it converge.
-    # Implicit finite-difference solver for the transient heat (Fourier) equation in cylindrical coordinates (radial, axisymmetric).
-    # Convergence loop function
-    for ITER_COUNT in range(MAX_ITERATIONS):
-        T_old = T.copy()  # Save the previous temperature profile
+        r = np.linspace(r_Vin, r_out, nr)  # radial coordinates
+        # q''' profile in all the numerical nodes
+        q = qprofile(r, r_Vin, B, Phi0, E, mu)
+        # Initial hypothesis for the T profile
+        T = np.full(nr, (T_1 + T_2) / 2.0)  # we will start from this and make it converge.
+        # Implicit finite-difference solver for the transient heat (Fourier) equation in cylindrical coordinates (radial, axisymmetric).
+        # Convergence loop function
+        for ITER_COUNT in range(MAX_ITERATIONS):
+            T_old = T.copy()  # Save the previous temperature profile
 
-        # --- Defining the Boundary Conditions ---
+            # --- Defining the Boundary Conditions ---
 
-        # --- A. Calcoulus od internal BC (i=0) ---
-        # Using the value of of T[1]==T_old[1] to calcoulate the new step T[0]
-        #  (T_1-T[0])*h1 = -k (T[1]-T[0])/Dr
-        T[0] = (h1 * T_1 + (k/Dr) * T_old[1]) / (h1 + k/Dr)
+            # --- A. Calcoulus od internal BC (i=0) ---
+            # Using the value of of T[1]==T_old[1] to calcoulate the new step T[0]
+            #  (T_1-T[0])*h1 = -k (T[1]-T[0])/Dr
+            T[0] = (h1 * T_1 + (k/Dr) * T_old[1]) / (h1 + k/Dr)
 
-        # --- B. Calcoulus of external BC (i=nr) ---
-        # Using the value of T[nr-2]==T_old[nr-2] to calculate the new step T[nr-1]
-        #  -k (T[nr-1]-T[nr-2])/Dr = U2 * (T[nr-1]-T_2)
-        T[nr-1] = (U2 * T_2 + (k/Dr) * T_old[nr-2]) / (U2 + k/Dr)
+            # --- B. Calcoulus of external BC (i=nr) ---
+            # Using the value of T[nr-2]==T_old[nr-2] to calculate the new step T[nr-1]
+            #  -k (T[nr-1]-T[nr-2])/Dr = U2 * (T[nr-1]-T_2)
+            T[nr-1] = (U2 * T_2 + (k/Dr) * T_old[nr-2]) / (U2 + k/Dr)
 
-        # --- Calcoulus of internal nodes (i=1...nr-2) ---
-        # We use the implicit euler scheme to calculate the internal nodes
-        for i in range(1, nr - 1):
-            coeff_A = (k/Dr**2) - (k / (r[i] * 2 * Dr))
-            coeff_C = (k/Dr**2) + (k / (r[i] * 2 * Dr))
-            coeff_B = (2*k / Dr**2)
-            T[i] = (coeff_A * T[i-1] + coeff_C * T_old[i+1] + q[i]) / coeff_B
+            # --- Calcoulus of internal nodes (i=1...nr-2) ---
+            # We use the implicit euler scheme to calculate the internal nodes
+            for i in range(1, nr - 1):
+                coeff_A = (k/Dr**2) - (k / (r[i] * 2 * Dr))
+                coeff_C = (k/Dr**2) + (k / (r[i] * 2 * Dr))
+                coeff_B = (2*k / Dr**2)
+                T[i] = (coeff_A * T[i-1] + coeff_C * T_old[i+1] + q[i]) / coeff_B
 
+            # ---Convergence check ---
+            if np.allclose(T, T_old, atol=TOLERANCE):
+                print(f"Convergence reached after {ITER_COUNT} iteractions.")
+                break
+        else:
+            # If the loop finishes without 'break'
+            print("WARNING: Maximum interactions reached -> NO COVERGENCE.")
+        #T_max=np.max(T)
+        #Sm = Sm_calcolus(T_max)
+        T_ave=np.mean(T)
+        print(f"T avg: {T_ave:.2f} C")
+        [Sm,Sy] = Sm_calcolus(T_ave)
+        t_min=pDes*r_Vin/(Sm-0.5*pDes) #Minimum vessel thickness [m]
         # ---Convergence check ---
-        if np.allclose(T, T_old, atol=TOLERANCE):
-            print(f"Convergence reached after {ITER_COUNT} iteractions.")
-            break
+        if math.fabs(t_min-t)<TOLERANCE:
+                print(f"Thickness convergence reached after {iter_count} iteractions.")
+                [t_min, q, T, r, Sm , Sy]=Bthickness(t_min, T, r_Vin, r_Vout, Eyoung, NUpoisson)
+                break
     else:
         # If the loop finishes without 'break'
-        print("WARNING: Maximum interactions reached -> NO COVERGENCE.")
-    #T_max=np.max(T)
-    #Sm = Sm_calcolus(T_max)
-    T_ave=np.mean(T)
-    print(f"T avg: {T_ave:.2f} C")
-    [Sm,Sy] = Sm_calcolus(T_ave)
-    t_min=pDes*r_Vin/(Sm-0.5*pDes) #Minimum vessel thickness [m]
-
-    # ---Convergence check ---
-    if math.fabs(t_min-t)<TOLERANCE:
-            print(f"Thickness convergence reached after {iter_count} iteractions.")
-            break
-  else:
-    # If the loop finishes without 'break'
-    print("WARNING: Maximum interactions reached -> NO THICKNESS COVERGENCE.")
-  return t_min, q, T, r, h1, Sm , Sy
+        print("WARNING: Maximum interactions reached -> NO THICKNESS COVERGENCE.")
+    return t_min, q, T, r, Sm , Sy
 
 def plotting (r,T,q,s):
     # Plotting
@@ -284,39 +381,12 @@ def Tpowerflux(r_coords, r_inner, T, k):
     return qx
 
 def main():
+    global h1, k, T_1, T_2, R_conv, r_Vout, MAX_ITERATIONS, TOLERANCE, pDes
     ## ---Thickness evaluation and Themperature profile in a cylindrical geometry ---
-    [t,q,T,r,h1,Sm,Sy]=Tthickness (t_Des, r_Vin, nr, B, Phi0, E, mu)
+    [t,q,T,r,Sm,Sy]=Tthickness (t_Des, r_Vin, nr, B, Phi0, E, mu)
     print(f"thickness: {t:.3f} m")
     
-    ##---Buckling evaluation---
-    print(f"Sy: {Sy:.2f} MPa")
-    #Bucling of the vessel
-    Dt_c=math.sqrt(Eyoung*10**3/((1-NUpoisson**2)*Sy)) #Critical slenderness ratio
-    #print(f"D/t: {Dt_c:.2f}")
-    Dt = (r_Vout*2)/t
-    print(f"D/t: {Dt:.2f}")
-    if Dt < Dt_c:
-        print("Plastic collapse buckling")
-    else: 
-        print("Elastic collapse buckling")
-    #Critical pressures for the buckling in a thin tubes (Rext/t>7,5)
-    pe=2*(Eyoung*10**3/(1-NUpoisson**2))/Dt**3 #Buckling elsatic collapse pressure
-    p0=2*Sy/Dt #Plastic collapse pressure
-    print(f"pe: {pe:.2f} MPa")
-    print(f"p0: {p0:.2f} MPa")
-    print(f"p0/pe: {p0/pe:.2f} MPa")
-    W = 0.01 #Ovalization factor
-    Z = math.sqrt(3)*(2*Dt+1)*W/4 #Imperfection factor
-    print(f"Z: {Z:.2f}")
-    Pu= p0/math.sqrt(1+Z**2)  #Lower bound collapse pressure
-    Pl= (p0+pe*(1+Z)-math.sqrt((p0+pe*(1+Z))**2-(4*pe*p0)))/2  #Lower bound collapse pressure
-    #if p0/pe<
-    Pallow=Pl/1.5 #Allowable buckling pressure with safety factor 1.5
-    #Pallow=(muz*Pu+(1-muz)*Pl)/1.5 #Allowable buckling pressure with safety factor 1.5
-    
-    #Evaluation of the thickness to udisfy teh bucling criternium
-    #[]=Bthickness(t, Sy, r_Vin, r_Vout, Eyoung, NUpoisson, muz):
-    
+
     #Calcoulus of the hoop stress
     s = sigmatheta(nr, T, alpha, Eyoung, NUpoisson)
 
@@ -339,7 +409,7 @@ def main():
     print(f"Sm: {Sm:.2f} MPa")
     safety_criterium(Pm,Sm,s_max)
     plotting(r,T,q,s)
-
+    
 
 
     ##--- Thermal power flux  (KWm−2)  on the inner and outer vessel surface without con sidering the radiation heat source  (q′′′=0)---
